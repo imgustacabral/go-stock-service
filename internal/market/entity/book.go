@@ -6,20 +6,20 @@ import (
 )
 
 type Book struct {
-	Order        []*Order
-	Transactions []*Transaction
-	OrdersChan   chan *Order
-	OrderChanOut chan *Order
-	Wg           *sync.WaitGroup
+	Order         []*Order
+	Transactions  []*Transaction
+	OrdersChan    chan *Order // input
+	OrdersChanOut chan *Order
+	Wg            *sync.WaitGroup
 }
 
 func NewBook(orderChan chan *Order, orderChanOut chan *Order, wg *sync.WaitGroup) *Book {
 	return &Book{
-		Order:        []*Order{},
-		Transactions: []*Transaction{},
-		OrdersChan:   orderChan,
-		OrderChanOut: orderChanOut,
-		Wg:           wg,
+		Order:         []*Order{},
+		Transactions:  []*Transaction{},
+		OrdersChan:    orderChan,
+		OrdersChanOut: orderChanOut,
+		Wg:            wg,
 	}
 }
 
@@ -40,8 +40,8 @@ func (b *Book) Trade() {
 					b.AddTransaction(transaction, b.Wg)
 					sellOrder.Transactions = append(sellOrder.Transactions, transaction)
 					order.Transactions = append(order.Transactions, transaction)
-					b.OrderChanOut <- sellOrder
-					b.OrderChanOut <- order
+					b.OrdersChanOut <- sellOrder
+					b.OrdersChanOut <- order
 					if sellOrder.PendingShares > 0 {
 						sellOrders.Push(sellOrder)
 					}
@@ -56,8 +56,8 @@ func (b *Book) Trade() {
 					b.AddTransaction(transaction, b.Wg)
 					buyOrder.Transactions = append(buyOrder.Transactions, transaction)
 					order.Transactions = append(order.Transactions, transaction)
-					b.OrderChanOut <- buyOrder
-					b.OrderChanOut <- order
+					b.OrdersChanOut <- buyOrder
+					b.OrdersChanOut <- order
 					if buyOrder.PendingShares > 0 {
 						buyOrders.Push(buyOrder)
 					}
@@ -69,6 +69,7 @@ func (b *Book) Trade() {
 
 func (b *Book) AddTransaction(transaction *Transaction, wg *sync.WaitGroup) {
 	defer wg.Done()
+
 	sellingShares := transaction.SellingOrder.PendingShares
 	buyingShares := transaction.BuyingOrder.PendingShares
 
@@ -78,15 +79,13 @@ func (b *Book) AddTransaction(transaction *Transaction, wg *sync.WaitGroup) {
 	}
 
 	transaction.SellingOrder.Investor.UpdateAssetPosition(transaction.SellingOrder.Asset.ID, -minShares)
-	transaction.SellingOrder.PendingShares -= minShares
+	transaction.AddSellOrderPendingShares(-minShares)
 
 	transaction.BuyingOrder.Investor.UpdateAssetPosition(transaction.BuyingOrder.Asset.ID, minShares)
-	transaction.BuyingOrder.PendingShares -= minShares
+	transaction.AddBuyOrderPendingShares(-minShares)
 
-	transaction.CalculateTotal()
-
-	transaction.CloseBuyTransaction()
-	transaction.CloseSellTransaction()
-
+	transaction.CalculateTotal(transaction.Shares, transaction.BuyingOrder.Price)
+	transaction.CloseBuyOrder()
+	transaction.CloseSellOrder()
 	b.Transactions = append(b.Transactions, transaction)
 }
